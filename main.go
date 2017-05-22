@@ -1,12 +1,28 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os/exec"
+	"time"
+
+	"golang.org/x/time/rate"
 )
+
+const (
+	// rateLimit is the number of requests per second we want to allow
+	rateLimit rate.Limit = 10
+)
+
+var limiter *rate.Limiter
+var busyMessage = "Server is busy, please try again"
+
+func init() {
+	limiter = rate.NewLimiter(rateLimit, 1)
+}
 
 // JsonnetRequest represents a request from the client, containing
 // code to be executed.
@@ -50,6 +66,39 @@ func successResponse(output string) string {
 	return string(bytes)
 }
 
+// runJsonnet wraps the execution of the jsonnet command.
+func runJsonnet(code string) ([]byte, bool, error) {
+	var err error
+	cmd := exec.Command("jsonnet", "-e", code)
+
+	// Don't let the command run for more than 1s
+	var timer *time.Timer
+	wasKilled := false
+	timer = time.AfterFunc(time.Second, func() {
+		timer.Stop()
+		if cmd.ProcessState == nil {
+			log.Printf("Killing jsonnet after 1s deadline\n")
+			cmd.Process.Kill()
+		}
+	})
+	defer timer.Stop()
+
+	outBytes, err := cmd.CombinedOutput()
+
+	// Before we check err: if we killed it ourselves, just return that we're
+	// busy.
+	if wasKilled {
+		return nil, true, fmt.Errorf(busyMessage)
+	}
+
+	// If we got an error running, return the stdout/stderr, if available, as the error.
+	if err != nil {
+		err = fmt.Errorf(string(outBytes))
+	}
+
+	return outBytes, false, err
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -67,6 +116,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//Check rate limits
+	if !limiter.Allow() {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(errorResponse(fmt.Errorf(busyMessage))))
+		return
+	}
+	limiter.Wait(context.TODO())
+
+	// Decode the body and convert it
 	decoder := json.NewDecoder(r.Body)
 	var req JsonnetRequest
 	err := decoder.Decode(&req)
@@ -74,16 +132,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, errorResponse(err))
 		return
 	}
+	outBytes, wasKilled, err := runJsonnet(req.Code)
 
-	// NOTE: To be honest, I (hausdorff) do not really know anything
-	// about HTTP, so it's not clear to me that the right thing to do is
-	// to return a 200 OK here.
-	//
-	// TODO: Kill off Jsonnet jobs that are more than a couple seconds
-	// long.
-	//
-	outBytes, err := exec.Command("jsonnet", "-e", req.Code).Output()
 	if err != nil {
+		// If we killed the process, return too many requests... else, just have it
+		// be 400 bad request, since it should only be possible to fail if their
+		// jsonnet input had something wrong with it.)
+		if wasKilled {
+			w.WriteHeader(http.StatusTooManyRequests)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
 		fmt.Fprint(w, errorResponse(err))
 	} else {
 		fmt.Fprint(w, successResponse(string(outBytes)))
@@ -93,6 +152,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	log.Println("Starting server")
+
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(":8080", nil)
 }
