@@ -14,7 +14,7 @@ import (
 
 const (
 	// rateLimit is the number of requests per second we want to allow
-	rateLimit rate.Limit = 10
+	rateLimit rate.Limit = 100
 )
 
 var limiter *rate.Limiter
