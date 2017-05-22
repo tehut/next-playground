@@ -15,7 +15,8 @@ import (
 
 const (
 	// rateLimit is the number of requests per second we want to allow
-	rateLimit         rate.Limit = 100
+	rateLimit         rate.Limit = 20
+	rateLimitBurst               = 30
 	jsonnetRunTimeout            = 5 * time.Second
 )
 
@@ -24,7 +25,7 @@ var errBusy = errors.New("Server is busy, please try again")
 var errTimeout = errors.New("Jsonnet evaluation timed out")
 
 func init() {
-	limiter = rate.NewLimiter(rateLimit, 1)
+	limiter = rate.NewLimiter(rateLimit, rateLimitBurst)
 }
 
 // JsonnetRequest represents a request from the client, containing
@@ -100,15 +101,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//Check rate limits
-	res := limiter.Reserve()
-	if !res.OK() {
-	}
 	if !limiter.Allow() {
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(errorResponse("", errBusy)))
 		return
 	}
-	limiter.Wait(context.TODO())
 
 	// Decode the body and convert it
 	decoder := json.NewDecoder(r.Body)
