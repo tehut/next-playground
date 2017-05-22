@@ -52,6 +52,19 @@ func successResponse(output string) string {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+
+	// Set CORS headers if requested
+	if origin := r.Header.Get("Origin"); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", "ksonnet.heptio.com")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers",
+			"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token")
+	}
+	// And if this is an OPTIONS request, stop here (don't process the body)
+	if r.Method == http.MethodOptions {
+		return
+	}
+
 	decoder := json.NewDecoder(r.Body)
 	var req JsonnetRequest
 	err := decoder.Decode(&req)
@@ -60,7 +73,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//
 	// NOTE: To be honest, I (hausdorff) do not really know anything
 	// about HTTP, so it's not clear to me that the right thing to do is
 	// to return a 200 OK here.

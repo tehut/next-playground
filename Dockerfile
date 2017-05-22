@@ -1,21 +1,37 @@
-FROM golang:1.8
+FROM alpine:3.5
 
-EXPOSE 8080
+# Install jsonnet first
+RUN apk update \
+&& apk add \
+     git \
+     build-base \
+     ca-certificates \
+     openssl \
+&& rm -rf /var/cache/apk/*
 
-# Create go directory, copy project source in.
-RUN mkdir -p /go/src/ksonnet-playground/internal
-ADD main.go /go/src/ksonnet-playground
+WORKDIR /tmp
+RUN git clone https://github.com/google/jsonnet.git \
+  && cd jsonnet \
+  && git reset --hard v0.9.3 \
+  && make jsonnet \
+  && cp jsonnet /usr/local/bin \
+  && cd /tmp \
+  && rm -rf jsonnet
+
+RUN mkdir -p /app/internal
 
 # Copy data into project directory.
-WORKDIR /go/src/ksonnet-playground
-RUN wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/core.libsonnet
-RUN wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/util.libsonnet
-WORKDIR /go/src/ksonnet-playground/internal
-RUN wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/assert.libsonnet
-RUN wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/base.libsonnet
-RUN wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/meta.libsonnet
+WORKDIR /app
+RUN wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/core.libsonnet \
+&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/util.libsonnet \
+&& cd internal \
+&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/assert.libsonnet \
+&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/base.libsonnet \
+&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/meta.libsonnet \
+&& cd /app
 
-WORKDIR /go/src/ksonnet-playground
-RUN go build main.go
+# Put the (pre-built by the Makefile) app in place
+COPY /ksonnet-playground /
 
-CMD ./main
+EXPOSE 8080
+CMD /ksonnet-playground
