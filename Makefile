@@ -32,8 +32,17 @@ all: cbuild container
 cbuild:
 	$(DOCKER) run --rm -v $(DIR):$(BUILDMNT) -w $(BUILDMNT) $(BUILD_IMAGE) /bin/sh -c '$(BUILD)'
 
-container: cbuild
+container: cbuild update-submodules
 	$(DOCKER) build -t $(REGISTRY)/$(TARGET):latest -t $(REGISTRY)/$(TARGET):$(VERSION) .
+
+run-contianer: container
+	$(DOCKER) run -ti --rm -p 8080:8080 -p 9102:9102 $(REGISTRY)/$(TARGET):latest
+
+.PHONY: update-submodules
+update-submodules:
+	git submodule init
+	git submodule sync
+	git submodule update
 
 # TODO: Determine tagging mechanics
 push:

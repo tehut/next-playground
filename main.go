@@ -7,17 +7,16 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
-	"os"
+	"golang.org/x/time/rate"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/time/rate"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -25,6 +24,8 @@ const (
 	rateLimit         rate.Limit = 20
 	rateLimitBurst               = 30
 	jsonnetRunTimeout            = 5 * time.Second
+
+	extraImportPath = "ksonnet.beta.1"
 )
 
 var (
@@ -128,7 +129,10 @@ func runJsonnet(ctx context.Context, code string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, jsonnetRunTimeout)
 	defer cancel()
 
-	outBytes, err := exec.CommandContext(ctx, "jsonnet", "-e", code).CombinedOutput()
+	outBytes, err := exec.CommandContext(ctx,
+		"jsonnet",
+		"-J", extraImportPath,
+		"-e", code).CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		p8sTimeoutRequests.Inc()
 		err = errTimeout
