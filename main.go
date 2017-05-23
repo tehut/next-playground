@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/ghodss/yaml"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -136,6 +137,11 @@ func runJsonnet(ctx context.Context, code string) (string, error) {
 	if ctx.Err() == context.DeadlineExceeded {
 		p8sTimeoutRequests.Inc()
 		err = errTimeout
+	}
+
+	// Convert to yaml
+	if err == nil {
+		outBytes, err = yaml.JSONToYAML(outBytes)
 	}
 	return string(outBytes), err
 }
