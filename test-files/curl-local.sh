@@ -1,5 +1,6 @@
 #! /bin/bash
+set -o errexit
+set -o pipefail
+set -o nounset
 
-INPUT_FILE="$1"
-
-curl -X POST --data-raw "$(jq -n --arg v "$(cat $INPUT_FILE)" '{"code": $v}')" localhost:8080
+"$(dirname "$0")"/curl.sh localhost:8080 "$1"

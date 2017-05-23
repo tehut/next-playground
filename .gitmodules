@@ -1,3 +1,3 @@
 [submodule "ext/ksonnet-lib"]
 	path = ext/ksonnet-lib
-	url = git@github.com:ksonnet/ksonnet-lib.git
+	url = https://github.com/ksonnet/ksonnet-lib.git
