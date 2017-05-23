@@ -16,6 +16,7 @@ function cleanup() {
     set +e
     docker rmi "${TEST_IMAGE}" >/dev/null 2>&1
     docker kill "${CONTAINER_NAME}" >/dev/null 2>&1
+    docker rm "${CONTAINER_NAME}" >/dev/null 2>&1
 }
 trap cleanup EXIT
 
@@ -27,11 +28,11 @@ trap cleanup EXIT
 
 
 # Run the image in the background
-docker run -d --name "${CONTAINER_NAME}" --rm -v "$(pwd):$(pwd)" "${IMAGE}" >/dev/null 2>&1
+docker run -d --name "${CONTAINER_NAME}" -v "$(pwd):$(pwd)" "${IMAGE}"
 
 # Run a tester against it, using docker linked containers (we can't guarantee
 # we can actually listen on ports)
-docker run --rm -it \
+docker run --rm -t \
     -v "$(pwd):$(pwd)" \
     --link "${CONTAINER_NAME}:${CONTAINER_NAME}" \
     "${TEST_IMAGE}" \

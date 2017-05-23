@@ -25,7 +25,7 @@ DIR := ${CURDIR}
 BUILD = go build -v
 
 .PHONY: all local container cbuild push ci-test update-submodules
-all: cbuild container
+all: container
 
 local:
 	$(BUILD)
