@@ -24,10 +24,11 @@ DOCKER ?= docker
 DIR := ${CURDIR}
 BUILD = go build -v
 
+.PHONY: all local container cbuild push ci-test update-submodules
+all: cbuild container
+
 local:
 	$(BUILD)
-
-all: cbuild container
 
 cbuild:
 	$(DOCKER) run --rm -v $(DIR):$(BUILDMNT) -w $(BUILDMNT) $(BUILD_IMAGE) /bin/sh -c '$(BUILD)'
@@ -38,7 +39,9 @@ container: cbuild update-submodules
 run-contianer: container
 	$(DOCKER) run -ti --rm -p 8080:8080 -p 9102:9102 $(REGISTRY)/$(TARGET):latest
 
-.PHONY: update-submodules
+ci-test: container
+	IMAGE=$(REGISTRY)/$(TARGET):$(VERSION) ./ci/test.sh
+
 update-submodules:
 	git submodule init
 	git submodule sync
@@ -46,9 +49,7 @@ update-submodules:
 
 # TODO: Determine tagging mechanics
 push:
-	docker -- push $(REGISTRY)/$(TARGET)
-
-.PHONY: all local container cbuild push
+	gcloud docker -- push $(REGISTRY)/$(TARGET):$(VERSION)
 
 clean:
 	rm -f $(TARGET) $(TESTTARGET)
