@@ -14,6 +14,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"os"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/time/rate"
 )
@@ -28,9 +30,10 @@ const (
 var (
 	limiter *rate.Limiter
 
-	errBusy      = errors.New("Server is busy, please try again")
-	errTimeout   = errors.New("Jsonnet evaluation timed out")
-	originRegexp = regexp.MustCompile(`^https?://.*\.heptio\.com|localhost:\d+$`)
+	skipCorsCheck = false
+	errBusy       = errors.New("Server is busy, please try again")
+	errTimeout    = errors.New("Jsonnet evaluation timed out")
+	originRegexp  = regexp.MustCompile(`^https?://.*\.heptio\.com|localhost:\d+$`)
 
 	p8sRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -65,6 +68,10 @@ var (
 )
 
 func init() {
+	if os.Getenv("SKIP_CORS_CHECK") == "true" {
+		skipCorsCheck = true
+	}
+
 	limiter = rate.NewLimiter(rateLimit, rateLimitBurst)
 	prometheus.MustRegister(p8sRequests)
 	prometheus.MustRegister(p8sRateLimitedRequests)
@@ -132,12 +139,13 @@ func runJsonnet(ctx context.Context, code string) (string, error) {
 func handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	// Set CORS headers if requested
-	if origin := r.Header.Get("Origin"); originRegexp.Match([]byte(origin)) {
+	if origin := r.Header.Get("Origin"); skipCorsCheck || originRegexp.Match([]byte(origin)) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers",
 			"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token")
 	}
+
 	// And if this is an OPTIONS request, stop here (don't process the body)
 	if r.Method == http.MethodOptions {
 		return
