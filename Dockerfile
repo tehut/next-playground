@@ -18,17 +18,12 @@ RUN git clone https://github.com/google/jsonnet.git \
   && cd /tmp \
   && rm -rf jsonnet
 
-RUN mkdir -p /app/internal
+RUN mkdir /app
 
 # Copy data into project directory.
 WORKDIR /app
-RUN wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/core.libsonnet \
-&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/util.libsonnet \
-&& cd internal \
-&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/assert.libsonnet \
-&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/base.libsonnet \
-&& wget https://raw.githubusercontent.com/ksonnet/ksonnet-lib/master/kube/internal/meta.libsonnet \
-&& cd /app
+COPY /ext/ksonnet-lib/ksonnet.alpha.1/ ./ksonnet.alpha.1/
+COPY /ext/ksonnet-lib/ksonnet.beta.1/ ./ksonnet.beta.1/
 
 # Put the (pre-built by the Makefile) app in place
 COPY /ksonnet-playground /
