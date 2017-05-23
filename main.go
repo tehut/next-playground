@@ -8,8 +8,15 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"regexp"
+	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"os"
+
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/time/rate"
 )
 
@@ -20,12 +27,57 @@ const (
 	jsonnetRunTimeout            = 5 * time.Second
 )
 
-var limiter *rate.Limiter
-var errBusy = errors.New("Server is busy, please try again")
-var errTimeout = errors.New("Jsonnet evaluation timed out")
+var (
+	limiter *rate.Limiter
+
+	skipCorsCheck = false
+	errBusy       = errors.New("Server is busy, please try again")
+	errTimeout    = errors.New("Jsonnet evaluation timed out")
+	originRegexp  = regexp.MustCompile(`^https?://.*\.heptio\.com|localhost:\d+$`)
+
+	p8sRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "ksonnetplayground_request_duration",
+			Help: "Duration of requests to the ksonnet playground",
+		},
+		[]string{"method"},
+	)
+
+	p8sRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ksonnetplayground_requests",
+			Help: "Number of total requests to the ksonnet playground",
+		},
+		[]string{"method"},
+	)
+
+	p8sRateLimitedRequests = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ksonnetplayground_requests_ratelimited",
+		Help: "Number of requests to the ksonnet playground where we responded with HTTP 429 due to rate limits",
+	})
+
+	p8sTimeoutRequests = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ksonnetplayground_requests_jsonnet_timeout",
+		Help: "Number of requests to the ksonnet playground where we hit a timeout running jsonnet",
+	})
+
+	p8sRunningRequests = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ksonnetplayground_running_requests",
+		Help: "Number of requests to the ksonnet playground currently being processed by this instance",
+	})
+)
 
 func init() {
+	if os.Getenv("SKIP_CORS_CHECK") == "true" {
+		skipCorsCheck = true
+	}
+
 	limiter = rate.NewLimiter(rateLimit, rateLimitBurst)
+	prometheus.MustRegister(p8sRequests)
+	prometheus.MustRegister(p8sRateLimitedRequests)
+	prometheus.MustRegister(p8sTimeoutRequests)
+	prometheus.MustRegister(p8sRequestDuration)
+	prometheus.MustRegister(p8sRunningRequests)
 }
 
 // JsonnetRequest represents a request from the client, containing
@@ -78,6 +130,7 @@ func runJsonnet(ctx context.Context, code string) (string, error) {
 
 	outBytes, err := exec.CommandContext(ctx, "jsonnet", "-e", code).CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
+		p8sTimeoutRequests.Inc()
 		err = errTimeout
 	}
 	return string(outBytes), err
@@ -85,16 +138,14 @@ func runJsonnet(ctx context.Context, code string) (string, error) {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-
 	// Set CORS headers if requested
-	if origin := r.Header.Get("Origin"); origin != "" {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		// TODO: set this back once we're done with development
-		// w.Header().Set("Access-Control-Allow-Origin", "ksonnet.heptio.com")
+	if origin := r.Header.Get("Origin"); skipCorsCheck || originRegexp.Match([]byte(origin)) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers",
 			"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token")
 	}
+
 	// And if this is an OPTIONS request, stop here (don't process the body)
 	if r.Method == http.MethodOptions {
 		return
@@ -102,6 +153,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	//Check rate limits
 	if !limiter.Allow() {
+		p8sRateLimitedRequests.Inc()
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(errorResponse("", errBusy)))
 		return
@@ -127,12 +179,44 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	log.Println("Starting server at :8080")
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	http.HandleFunc("/", handler)
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		log.Fatal(err.Error())
-	}
+	go func() {
+		// Host the main site on 8080
+		defer wg.Done()
+
+		mux := http.NewServeMux()
+
+		p8sHandlerChain := promhttp.InstrumentHandlerInFlight(p8sRunningRequests,
+			promhttp.InstrumentHandlerCounter(p8sRequests,
+				promhttp.InstrumentHandlerDuration(p8sRequestDuration, http.HandlerFunc(handler)),
+			),
+		)
+
+		mux.Handle("/", p8sHandlerChain)
+		log.Println("Starting main server at :8080")
+		err := http.ListenAndServe(":8080", mux)
+
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+	}()
+
+	go func() {
+		// Host metrics on 9102 (so that we don't expose /metrics to the internet)
+		defer wg.Done()
+
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		log.Println("Starting metrics server at :9102")
+		err := http.ListenAndServe(":9102", mux)
+
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+	}()
+
+	wg.Wait()
 	log.Print("Graceful Exit...")
 }
