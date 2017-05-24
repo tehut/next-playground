@@ -160,6 +160,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if result := codeCache.Get(string(body)); result != nil && !result.Expired() {
+		p8sJsonnetCacheHits.Inc()
 		// Read the proper object from cache
 		if realResult, ok := result.Value().(CachedResult); ok {
 			w.WriteHeader(realResult.HTTPCode)
@@ -181,6 +182,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Finally, generate a new cache result
+	p8sJsonnetCacheMisses.Inc()
 	cachedResult := makeJsonnetCache(r.Context(), body)
 	codeCache.Set(string(body), cachedResult, 1*time.Hour)
 

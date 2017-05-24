@@ -35,12 +35,26 @@ var (
 		Name: "ksonnetplayground_running_requests",
 		Help: "Number of requests to the ksonnet playground currently being processed by this instance",
 	})
+
+	p8sJsonnetCacheHits = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ksonnetplayground_jsonnet_cache_hits",
+		Help: "Number of requests to the ksonnet playground API where the input jsonnet code is a cache hit",
+	})
+
+	p8sJsonnetCacheMisses = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ksonnetplayground_jsonnet_cache_misses",
+		Help: "Number of requests to the ksonnet playground API where the input jsonnet code is a cache miss",
+	})
 )
 
 func init() {
-	prometheus.MustRegister(p8sRequests)
-	prometheus.MustRegister(p8sRateLimitedRequests)
-	prometheus.MustRegister(p8sTimeoutRequests)
-	prometheus.MustRegister(p8sRequestDuration)
-	prometheus.MustRegister(p8sRunningRequests)
+	prometheus.MustRegister(
+		p8sRequests,
+		p8sRateLimitedRequests,
+		p8sTimeoutRequests,
+		p8sRequestDuration,
+		p8sRunningRequests,
+		p8sJsonnetCacheHits,
+		p8sJsonnetCacheMisses,
+	)
 }
