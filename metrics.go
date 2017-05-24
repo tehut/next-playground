@@ -5,8 +5,8 @@ import (
 )
 
 var (
-	p8sRequestDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
+	p8sRequestDuration = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
 			Name: "ksonnetplayground_request_duration",
 			Help: "Duration of requests to the ksonnet playground",
 		},
