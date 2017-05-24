@@ -21,6 +21,7 @@ set +e
 
 "${DIR}/curl.sh" "${HOST_PORT}" "${DIR}"/invalid.jsonnet && fail "invalid.jsonnet should have failed but did not"
 "${DIR}/curl.sh" "${HOST_PORT}" "${DIR}"/slow.jsonnet && fail "slow.jsonnet should have failed but did not"
+"${DIR}/curl.sh" "${HOST_PORT}" "${DIR}"/toobig.jsonnet && fail "toobig.jsonnet should have failed but did not"
 
 if [[ "${FAILED}" -eq "1" ]]; then
     exit 1
