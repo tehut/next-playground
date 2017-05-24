@@ -129,6 +129,7 @@ func makeJsonnetCache(ctx context.Context, body []byte) CachedResult {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, config.MaxContentLength)
 	defer r.Body.Close()
 
 	// Set CORS headers if requested
@@ -144,22 +145,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Don't process requests that are too big
-	if r.ContentLength > config.MaxContentLength {
+	// Check if this text is cached... read the body in so we can use it as a
+	// cache key. A failure from the MaxBytesReader in this case means the request
+	// is too large.
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
 		w.Write([]byte(errorResponse("", fmt.Errorf("Request too large - Code must be smaller than %v bytes", config.MaxContentLength))))
 		return
 	}
 
-	// Check if this text is cached... read the body in so we can use it as a cache key
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		log.Printf("Error reading request body: %v", err)
-		w.Write([]byte(errorResponse("", fmt.Errorf("Internal server error"))))
-		return
-	}
-
 	if result := codeCache.Get(string(body)); result != nil && !result.Expired() {
+		p8sJsonnetCacheHits.Inc()
 		// Read the proper object from cache
 		if realResult, ok := result.Value().(CachedResult); ok {
 			w.WriteHeader(realResult.HTTPCode)
@@ -181,6 +178,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Finally, generate a new cache result
+	p8sJsonnetCacheMisses.Inc()
 	cachedResult := makeJsonnetCache(r.Context(), body)
 	codeCache.Set(string(body), cachedResult, 1*time.Hour)
 
