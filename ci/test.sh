@@ -26,7 +26,7 @@ trap cleanup EXIT
   docker build -t "${TEST_IMAGE}" .
 )
 
-
+## Tests pt1
 # Run the image in the background
 docker run -d --name "${CONTAINER_NAME}" -v "$(pwd):$(pwd)" "${IMAGE}"
 
@@ -37,3 +37,18 @@ docker run --rm -t \
     --link "${CONTAINER_NAME}:${CONTAINER_NAME}" \
     "${TEST_IMAGE}" \
     "$(pwd)/test-files/all.sh" "${CONTAINER_NAME}:8080"
+
+docker kill "${CONTAINER_NAME}"
+docker rm "${CONTAINER_NAME}"
+
+## Tests pt2
+# Run the image in the background, with smaller rate limits
+docker run -d --name "${CONTAINER_NAME}" -v "$(pwd):$(pwd)" "${IMAGE}" /ksonnet-playground --rate-limit 1 --rate-limit-burst 1
+
+# Run a tester against it, using docker linked containers (we can't guarantee
+# we can actually listen on ports)
+docker run --rm -t \
+    -v "$(pwd):$(pwd)" \
+    --link "${CONTAINER_NAME}:${CONTAINER_NAME}" \
+    "${TEST_IMAGE}" \
+    "$(pwd)/test-files/hit-rate-limit.sh" "${CONTAINER_NAME}:8080" "$(pwd)/test-files/sample.jsonnet"

@@ -16,6 +16,11 @@
 			"Rev": "fec3b39b059c0f88fa6b20f5ed012b1aa203a8b4"
 		},
 		{
+			"ImportPath": "github.com/karlseguin/ccache",
+			"Comment": "v2.0.2-5-g3ba9789",
+			"Rev": "3ba9789cfd2cb7b4fb4657efc994cc1c599a648c"
+		},
+		{
 			"ImportPath": "github.com/matttproud/golang_protobuf_extensions/pbutil",
 			"Comment": "v1.0.0-2-gc12348c",
 			"Rev": "c12348ce28de40eed0136aa2b644d0ee0650e56c"
@@ -54,6 +59,10 @@
 		{
 			"ImportPath": "github.com/prometheus/procfs/xfs",
 			"Rev": "d098ca18df8bc825079013daf7bacefbb1ee877e"
+		},
+		{
+			"ImportPath": "github.com/spf13/pflag",
+			"Rev": "9ff6c6923cfffbcd502984b8e0c80539a94968b7"
 		},
 		{
 			"ImportPath": "golang.org/x/net/context",

@@ -1,13 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"regexp"
 	"sync"
@@ -16,71 +17,17 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/ghodss/yaml"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/karlseguin/ccache"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const (
-	// rateLimit is the number of requests per second we want to allow
-	rateLimit         rate.Limit = 20
-	rateLimitBurst               = 30
-	jsonnetRunTimeout            = 5 * time.Second
-
-	extraImportPath = "ksonnet.beta.1"
-)
-
 var (
-	limiter *rate.Limiter
-
-	skipCorsCheck = false
-	errBusy       = errors.New("Server is busy, please try again")
-	errTimeout    = errors.New("Jsonnet evaluation timed out")
-	originRegexp  = regexp.MustCompile(`^https?://.*\.heptio\.com|localhost:\d+$`)
-
-	p8sRequestDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name: "ksonnetplayground_request_duration",
-			Help: "Duration of requests to the ksonnet playground",
-		},
-		[]string{"method"},
-	)
-
-	p8sRequests = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "ksonnetplayground_requests",
-			Help: "Number of total requests to the ksonnet playground",
-		},
-		[]string{"method"},
-	)
-
-	p8sRateLimitedRequests = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "ksonnetplayground_requests_ratelimited",
-		Help: "Number of requests to the ksonnet playground where we responded with HTTP 429 due to rate limits",
-	})
-
-	p8sTimeoutRequests = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "ksonnetplayground_requests_jsonnet_timeout",
-		Help: "Number of requests to the ksonnet playground where we hit a timeout running jsonnet",
-	})
-
-	p8sRunningRequests = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "ksonnetplayground_running_requests",
-		Help: "Number of requests to the ksonnet playground currently being processed by this instance",
-	})
+	limiter      *rate.Limiter
+	codeCache    *ccache.Cache
+	errBusy      = errors.New("Server is busy, please try again")
+	errTimeout   = errors.New("Jsonnet evaluation timed out")
+	originRegexp = regexp.MustCompile(`^https?://.*\.heptio\.com|localhost:\d+$`)
 )
-
-func init() {
-	if os.Getenv("SKIP_CORS_CHECK") == "true" {
-		skipCorsCheck = true
-	}
-
-	limiter = rate.NewLimiter(rateLimit, rateLimitBurst)
-	prometheus.MustRegister(p8sRequests)
-	prometheus.MustRegister(p8sRateLimitedRequests)
-	prometheus.MustRegister(p8sTimeoutRequests)
-	prometheus.MustRegister(p8sRequestDuration)
-	prometheus.MustRegister(p8sRunningRequests)
-}
 
 // JsonnetRequest represents a request from the client, containing
 // code to be executed.
@@ -95,6 +42,14 @@ type JsonnetRequest struct {
 type JsonnetResponse struct {
 	Error  *string `json:"error"`
 	Output *string `json:"output"`
+}
+
+// CachedResult is the results of a jsonnet response, stored in an LRU cache.
+// It contains the body and HTTP code we should respond with when we see a
+// given request body.
+type CachedResult struct {
+	Response string
+	HTTPCode int
 }
 
 // errorResponse turns an error into a `JsonnetResponse`, serialized
@@ -127,12 +82,12 @@ func successResponse(output string) string {
 // runJsonnet wraps the execution of the jsonnet command.
 // The output bytes are included even when there was an error.
 func runJsonnet(ctx context.Context, code string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, jsonnetRunTimeout)
+	ctx, cancel := context.WithTimeout(ctx, config.JsonnetRunTimeout)
 	defer cancel()
 
 	outBytes, err := exec.CommandContext(ctx,
 		"jsonnet",
-		"-J", extraImportPath,
+		"-J", config.ExtraImportPath,
 		"-e", code).CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		p8sTimeoutRequests.Inc()
@@ -146,10 +101,38 @@ func runJsonnet(ctx context.Context, code string) (string, error) {
 	return string(outBytes), err
 }
 
+func makeJsonnetCache(ctx context.Context, body []byte) CachedResult {
+	// Decode the body and convert it
+	decoder := json.NewDecoder(bytes.NewBuffer(body))
+	var req JsonnetRequest
+	err := decoder.Decode(&req)
+	if err != nil {
+		return CachedResult{
+			HTTPCode: http.StatusBadRequest,
+			Response: errorResponse("", err),
+		}
+	}
+
+	outBytes, err := runJsonnet(ctx, req.Code)
+
+	if err != nil {
+		return CachedResult{
+			HTTPCode: http.StatusBadRequest,
+			Response: errorResponse(string(outBytes), err),
+		}
+	}
+
+	return CachedResult{
+		HTTPCode: http.StatusOK,
+		Response: successResponse(string(outBytes)),
+	}
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+
 	// Set CORS headers if requested
-	if origin := r.Header.Get("Origin"); skipCorsCheck || originRegexp.Match([]byte(origin)) {
+	if origin := r.Header.Get("Origin"); config.SkipCorsCheck || originRegexp.Match([]byte(origin)) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers",
@@ -161,7 +144,35 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//Check rate limits
+	// Don't process requests that are too big
+	if r.ContentLength > config.MaxContentLength {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		w.Write([]byte(errorResponse("", fmt.Errorf("Request too large - Code must be smaller than %v bytes", config.MaxContentLength))))
+		return
+	}
+
+	// Check if this text is cached... read the body in so we can use it as a cache key
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("Error reading request body: %v", err)
+		w.Write([]byte(errorResponse("", fmt.Errorf("Internal server error"))))
+		return
+	}
+
+	if result := codeCache.Get(string(body)); result != nil && !result.Expired() {
+		// Read the proper object from cache
+		if realResult, ok := result.Value().(CachedResult); ok {
+			w.WriteHeader(realResult.HTTPCode)
+			w.Write([]byte(realResult.Response))
+			return
+		}
+		//uh oh...
+		log.Printf("Could not marshal result from cache into a CachedResult: %v", result.Value())
+	}
+
+	// If it wasn't cached, throttle before calculating it. We use rate limits for
+	// the expensive part (running jsonnet). Requests that respond from cache or
+	// are too large don't count against the limit.
 	if !limiter.Allow() {
 		p8sRateLimitedRequests.Inc()
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -169,26 +180,20 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decode the body and convert it
-	decoder := json.NewDecoder(r.Body)
-	var req JsonnetRequest
-	err := decoder.Decode(&req)
-	if err != nil {
-		fmt.Fprint(w, errorResponse("", err))
-		return
-	}
-	outBytes, err := runJsonnet(r.Context(), req.Code)
+	// Finally, generate a new cache result
+	cachedResult := makeJsonnetCache(r.Context(), body)
+	codeCache.Set(string(body), cachedResult, 1*time.Hour)
 
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, errorResponse(string(outBytes), err))
-	} else {
-		fmt.Fprint(w, successResponse(string(outBytes)))
-	}
+	w.WriteHeader(cachedResult.HTTPCode)
+	w.Write([]byte(cachedResult.Response))
+
 	return
 }
 
 func main() {
+	limiter = rate.NewLimiter(config.RateLimit, config.RateLimitBurst)
+	codeCache = ccache.New(ccache.Configure().MaxSize(config.CacheSize))
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
