@@ -29,7 +29,7 @@ func init() {
 	flag.IntVar(&config.RateLimitBurst, "rate-limit-burst", 30, "Allowed burst for the rate limit")
 	flag.Int64Var(&config.MaxContentLength, "max-content-length", 10240, "Maximum content length of input jsonnet")
 	flag.IntVar(&timeoutSeconds, "jsonnet-run-timeout", 5, "Maximum duration to run jsonnet command for requests, in seconds")
-	flag.StringVar(&config.ExtraImportPath, "extra-import-path", "ksonnet.beta.1", "Additional path to search for jsonnet import files")
+	flag.StringVar(&config.ExtraImportPath, "extra-import-path", "ksonnet.beta.2", "Additional path to search for jsonnet import files")
 	flag.BoolVar(&config.SkipCorsCheck, "skip-cors-check", false, "Set this flag to allow all origins to access the API")
 	flag.Int64Var(&config.CacheSize, "cache-size", 10000, "Number of request entries to LRU cache")
 
