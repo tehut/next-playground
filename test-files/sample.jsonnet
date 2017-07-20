@@ -1,8 +1,10 @@
-local k = import "k.libsonnet";
-local container = k.core.v1.container;
+local k = import "ksonnet.beta.2/k.libsonnet";
 local deployment = k.apps.v1beta1.deployment;
-local prune = k.util.prune;
+local container = deployment.mixin.spec.template.spec.containersType;
+local containerPort = container.portsType;
 
-prune(deployment.default("nginx",
-  container.default("web", "nginx:1.13.0") +
-    container.helpers.namedPort("www", 80)))
+local nginxContainer =
+  container.new("web", "nginx:1.13.0") +
+  container.ports(containerPort.newNamed("www", 80));
+
+deployment.new("nginx", 2, nginxContainer)
