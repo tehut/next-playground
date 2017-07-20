@@ -36,7 +36,7 @@ cbuild:
 container: cbuild update-submodules
 	$(DOCKER) build -t $(REGISTRY)/$(TARGET):latest -t $(REGISTRY)/$(TARGET):$(VERSION) .
 
-run-contianer: container
+run-container: container
 	$(DOCKER) run -ti --rm -p 8080:8080 -p 9102:9102 $(REGISTRY)/$(TARGET):latest
 
 ci-test: container
