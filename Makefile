@@ -15,7 +15,7 @@
 TARGET = ksonnet-playground
 GOTARGET = github.com/heptio/$(TARGET)
 BUILDMNT = /go/src/$(GOTARGET)
-REGISTRY ?= gcr.io/heptio-images
+REGISTRY ?= gcr.io/heptio-prod
 VERSION ?= git-$(shell git describe --tags --always)
 TESTARGS ?= -v
 IMAGE = $(REGISTRY)/$(BIN)
